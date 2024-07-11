@@ -2,15 +2,12 @@
 
 (function () {
 
-    let todoList = [];
-
     // Создаём и возвращаем заголовок приложения
     function createAppTitle(title) {
         let appTitle = document.createElement('h2');
         appTitle.innerHTML = title;
         return appTitle;
     }
-
 
     // Создаём и возвращаем форму для создания дела
     function createTodoItemForm() {
@@ -47,7 +44,6 @@
         }
     }
 
-
     // Создаём и возвращаем список для элементов
     function createTodoList() {
         let list = document.createElement('ul');
@@ -55,24 +51,10 @@
         return list;
     }
 
-    // Сохраняем массив дел в LS 
-    function saveInLocalStorage(name, data) {
-        localStorage.setItem(name, JSON.stringify(data));
-    }
-
-    // Загружаем массив дел из LS 
-    function downloadFromLocalStorage(name) {
-        // Получаем данные в виде строки из LS
-        let data = localStorage.getItem(name);
-        // Если есть данные в LS - парсим, если нет - возвращаем пустой массив
-        return data ? JSON.parse(data) : [];
-    }
-
-
     // Создаём и возвращаем элемент для списка дел
-    function createTodoItem(obj, listName) {
+    function createTodoItemElement(todoObj, { onDone, onDelete }) {
+        const doneClass = 'list-group-item-success';
         let item = document.createElement('li');
-
         // Группа кнопок
         let buttonGroup = document.createElement('div');
         let doneButton = document.createElement('button');
@@ -80,10 +62,11 @@
 
         // Стили для элемента списка и размещения кнопок в правой части
         item.classList.add('list-group-item', 'd-flex', 'justify-content-between', 'align-items-center');
-        item.textContent = obj.name;
+        item.textContent = todoObj.name;
+
         // Если выбрано значение "true" - красим элемент зеленым цветом
-        if (obj.done) {
-            item.classList.add('list-group-item-success')
+        if (todoObj.done) {
+            item.classList.add(doneClass);
         };
         // Добавление классов для кнопок
         buttonGroup.classList.add('btn-group', 'btn-group-sm');
@@ -93,81 +76,75 @@
         deleteButton.textContent = 'Удалить';
 
         // Добавляем обработчика на кнопку "Готово"
-        doneButton.addEventListener('click', function () {
-            if (obj.done) {
-                item.classList.remove('list-group-item-success');
-                obj.done = false;
-            } else {
-                item.classList.add('list-group-item-success');
-                obj.done = true;
-            };
-            let objList = downloadFromLocalStorage(listName);
-            for (i = 0; i < objList.length; i++) {
-                if (obj.id === objList[i].id) {
-                    objList[i].done = obj.done;
-                    saveInLocalStorage(listName, objList);
-                }
-            }
-            console.log(objList);
+        doneButton.addEventListener('click', () => {
+            onDone({ todoObj, element: item });
+            item.classList.toggle(doneClass, todoObj.done);
         });
 
         // Добавляем обработчика на кнопку "Удалить"
-        deleteButton.addEventListener('click', function () {
-            if (confirm('Вы уверены?')) {
-                item.remove();
-                // Загружаю, изменяю и снова записываю в LS массив при удалении дела
-                let objList = downloadFromLocalStorage(listName);
-                todoList = objList.filter(el => el.id !== obj.id)
-                saveInLocalStorage(listName, todoList);
-            }
+        deleteButton.addEventListener('click', () => {
+            onDelete({ todoObj, element: item });
         });
 
-
         // Вкладываем кнопки в отдельный блок
-        buttonGroup.append(doneButton);
-        buttonGroup.append(deleteButton);
+        buttonGroup.append(doneButton, deleteButton);
+        // buttonGroup.append(deleteButton);
         item.append(buttonGroup);
 
-        // Делаем доступ к элементу и кнопкам, чтобы отрабатывать события нажатия
-        return {
-            item,
-            doneButton,
-            deleteButton,
-        };
+        return item;
     }
 
     // Первая функция при запуске приложения. Создаём список дел
-    function createTodoApp(container, title = 'Список дел', listName = "") {
+    async function createTodoApp(container, title, owner) {
 
         let todoAppTitle = createAppTitle(title);
         let todoItemForm = createTodoItemForm();
         let todoListUl = createTodoList();
-
+        const handlers = {
+            onDone({ todoObj }) {
+                todoObj.done = !todoObj.done;
+                fetch(`http://localhost:3000/api/todos/${todoObj.id}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ done: todoObj.done }),
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+            },
+            onDelete({ todoObj, element }) {
+                if (!confirm('Вы уверены?')) {
+                    return;
+                }
+                element.remove();
+                fetch(`http://localhost:3000/api/todos/${todoObj.id}`, {
+                    method: 'DELETE',
+                });
+            }
+        };
 
         container.append(todoAppTitle);
         container.append(todoItemForm.form);
         container.append(todoListUl);
 
+        //  Запрос на сервер загружаем список дел
+        const response = await fetch(`http://localhost:3000/api/todos?owner=${owner}`);
+        const todoItemList = await response.json();
 
-        // Загружаем массив дел из LS
-        todoList = downloadFromLocalStorage(listName);
-
-
-        // Создаём и возвращаем элементы из массива LS
-        for (let todoObj of todoList) {
-            todoListUl.append(createTodoItem(todoObj, listName).item);
-        }
+        todoItemList.forEach(todoItem => {
+                const todoItemElement = createTodoItemElement(todoItem, handlers);
+                todoListUl.append(todoItemElement);
+        });
 
         // Проверка в консоли
         console.log(todoList);
 
 
         // Создание события браузером на форме после нажатия на Enter или кнопку создания дела
-        todoItemForm.form.addEventListener('submit', function (e) {
+        todoItemForm.form.addEventListener('submit', async e => {
             // Строка ниже отменяет перезагрузку браузером страницы при отправке формы
             e.preventDefault();
 
-            // Если поле ввода осталось пустым, игнорируем создание элемента
+            // Если поле ввода осталось пустым, игнорируем создание дела
             if (!todoItemForm.input.value) {
                 return;
             };
@@ -175,17 +152,25 @@
             // Создание дела в виде объекта
             let todoObj = {
                 id: Math.round(Math.random() * 1000),
-                name: todoItemForm.input.value,
+                name: todoItemForm.input.value.trim(),
                 done: false,
-            }
+                owner,
+            };
 
-            // Добавляем дело в список и сохраняем в LS
-            todoList.push(todoObj);
-            saveInLocalStorage(listName, todoList);
+            //  Запрос на сервер сохраняем дело
+            const response = await fetch('http://localhost:3000/api/todos', {
+                method: 'POST',
+                body: JSON.stringify(todoObj),
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+            // Возвращаем дело с сервера
+            const todoItem = await response.json();
 
-            // Создаем и добавляем в список новое дело с названием из поля ввода
-            todoItem = createTodoItem(todoObj, listName);
-            todoListUl.append(todoItem.item);
+            // Создаем и добавляем в список новый элемент дела с данными с сервера
+            const todoItemElement = createTodoItemElement(todoItem, handlers);
+            todoListUl.append(todoItemElement);
             // Очистка поля от значения
             todoItemForm.input.value = '';
 
@@ -196,6 +181,7 @@
 
     }
 
+    let todoList = [];
     window.createTodoApp = createTodoApp;
 
 })();
